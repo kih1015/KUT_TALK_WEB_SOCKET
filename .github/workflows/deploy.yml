@@ -1,0 +1,85 @@
+name: Build and Deploy C WebSocket Server
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    env:
+      DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+      DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+      DB_USER: ${{ secrets.DB_USER }}
+      DB_PASS: ${{ secrets.DB_PASS }}
+      APP_PORT: 8090
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Install build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential cmake \
+            libcjson-dev libmysqlclient-dev libsodium-dev pkg-config \
+            libwebsockets-dev libssl-dev zlib1g-dev
+
+      - name: Configure
+        run: |
+          mkdir -p build
+          cd build
+          cmake .. -DCMAKE_BUILD_TYPE=Release -DENABLE_WEBSOCKET=ON
+
+      - name: Build
+        run: |
+          cd build
+          cmake --build . --config Release
+
+      - name: Deploy binary via SCP
+        uses: appleboy/scp-action@master
+        with:
+          host: ${{ env.DEPLOY_HOST }}
+          username: ubuntu
+          key: ${{ secrets.DEPLOY_KEY_PEM }}
+          port: ${{ env.DEPLOY_PORT }}
+          source: "build/kut_talk_ws"
+          target: "/home/ubuntu/kuttalk_ws/"
+
+      - name: Restart WebSocket server
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ env.DEPLOY_HOST }}
+          username: ubuntu
+          key: ${{ secrets.DEPLOY_KEY_PEM }}
+          port: ${{ env.DEPLOY_PORT }}
+          script: |
+            APP_DIR=/home/ubuntu/kuttalk_ws
+            PIDFILE=$APP_DIR/server.pid
+            BIN=$APP_DIR/build/kut_talk_ws
+            
+            # ─ 이전 인스턴스 종료 ─
+            if [ -f "$PIDFILE" ]; then
+              OLD_PID=$(cat "$PIDFILE")
+              if kill -0 "$OLD_PID" 2>/dev/null; then
+                echo "Stopping existing WS server (PID=$OLD_PID)"
+                kill "$OLD_PID"
+                sleep 5
+              fi
+              rm -f "$PIDFILE"
+            fi
+            
+            # ─ 새 인스턴스 기동 (포트 8090) ─
+            cd $APP_DIR/build
+            export DB_USER=${{ env.DB_USER }}
+            export DB_PASS=${{ env.DB_PASS }}
+            nohup "$BIN" --port ${{ env.APP_PORT }} \
+                  > ../websocket.log 2>&1 </dev/null &
+            
+            echo $! > "$PIDFILE"
+            echo "Started new WS server PID=$(cat "$PIDFILE") on port ${{ env.APP_PORT }}"
+            
+            sleep 10
