@@ -11,7 +11,7 @@
 #include <string.h>
 #include <errno.h>
 
-#define PORT 8080
+#define PORT 8090
 #define MAX_EVENTS 1024
 
 /* ── 클라이언트 구조 ── */
