@@ -1,4 +1,4 @@
-name: Build & Deploy WebSocket C Server
+name: Build&DeployKUTWebSocketServer
 
 on:
   push:
@@ -10,41 +10,41 @@ jobs:
     runs-on: ubuntu-latest
 
     env:
-      # ───────── deploy/DB info (GitHubSecrets) ─────────
+      # ───── 원격·DB 정보 : GitHubSecrets로 관리 ─────
       DEPLOY_HOST:  ${{ secrets.DEPLOY_HOST }}
       DEPLOY_PORT:  ${{ secrets.DEPLOY_PORT }}
       DB_USER:      ${{ secrets.DB_USER }}
       DB_PASS:      ${{ secrets.DB_PASS }}
-      APP_PORT:     8090                  # ← 실행 포트
+      APP_PORT:     8090                  # 실행 포트
 
     steps:
-      # ───────── 1.소스 체크아웃 ─────────
+      # 1) 소스 체크아웃
       - name: Checkout
         uses: actions/checkout@v3
 
-      # ───────── 2.빌드 의존성 설치 ─────────
+      # 2) 빌드 의존성 설치 (OpenSSL 포함)
       - name: Install build dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y \
             build-essential cmake pkg-config \
             libcjson-dev libmysqlclient-dev libsodium-dev \
-            libwebsockets-dev libssl-dev zlib1g-dev
+            libssl-dev zlib1g-dev   # OpenSSL::Crypto 용
 
-      # ───────── 3.CMake구성 &빌드 ─────────
-      - name: Configure (CMake)
-        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DENABLE_WEBSOCKET=ON
+      # 3) CMake 구성 & 빌드
+      - name: Configure
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
 
       - name: Build
-        run: cmake --build build --config Release --target kut_talk_ws
+        run: cmake --build build --config Release --target KUT_WEB_SOCKET
 
-      # ───────── 4.바이너리 위치 고정 ─────────
+      # 4) 실행파일 고정 위치 복사
       - name: Collect binary
         run: |
-          cp $(find build -type f -name kut_talk_ws) ./kut_talk_ws
-          ls -l ./kut_talk_ws               # 디버깅용 출력
+          cp build/KUT_WEB_SOCKET ./KUT_WEB_SOCKET
+          ls -l ./KUT_WEB_SOCKET   # 디버깅용 출력
 
-      # ───────── 5.SCP배포 ─────────
+      # 5) SCP 전송
       - name: Upload via SCP
         uses: appleboy/scp-action@master
         with:
@@ -52,11 +52,11 @@ jobs:
           username:   ubuntu
           key:        ${{ secrets.DEPLOY_KEY_PEM }}
           port:       ${{ env.DEPLOY_PORT }}
-          source:     "kut_talk_ws"                # 단일 파일 전송
-          target:     "/home/ubuntu/kuttalk_ws/build/"
-          strip_components: 0                      # 경로 유지 없음
+          source:     "KUT_WEB_SOCKET"               # 단일 파일
+          target:     "/home/ubuntu/kut_ws/build/"
+          strip_components: 0
 
-      # ───────── 6.원격 재시작 ─────────
+      # 6) 원격 재시작
       - name: Restart WebSocket server
         uses: appleboy/ssh-action@master
         with:
@@ -65,27 +65,27 @@ jobs:
           key:      ${{ secrets.DEPLOY_KEY_PEM }}
           port:     ${{ env.DEPLOY_PORT }}
           script: |
-            APP_DIR=/home/ubuntu/kuttalk_ws
+            APP_DIR=/home/ubuntu/kut_ws
             PIDFILE=$APP_DIR/server.pid
-            BIN=$APP_DIR/build/kut_talk_ws
+            BIN=$APP_DIR/build/KUT_WEB_SOCKET
             
-            echo "=== Stopping previous instance if any ==="
+            echo "==> Stopping previous instance (if any)"
             if [ -f "$PIDFILE" ]; then
-              OLD_PID=$(cat "$PIDFILE")
-              if kill -0 "$OLD_PID" 2>/dev/null; then
-                kill "$OLD_PID"
-                echo "Stopped PID $OLD_PID"
+              OLD=$(cat "$PIDFILE")
+              if kill -0 "$OLD" 2>/dev/null; then
+                kill "$OLD"
+                echo "Stopped PID $OLD"
                 sleep 5
               fi
               rm -f "$PIDFILE"
             fi
             
-            echo "=== Starting new instance on port ${{ env.APP_PORT }} ==="
+            echo "==> Starting new instance on port ${{ env.APP_PORT }}"
             cd $APP_DIR/build
             export DB_USER="${{ env.DB_USER }}"
             export DB_PASS="${{ env.DB_PASS }}"
             nohup "$BIN" --port ${{ env.APP_PORT }} \
-                  > ../websocket.log 2>&1 </dev/null &
+                  > ../ws.log 2>&1 </dev/null &
             
             echo $! > "$PIDFILE"
             echo "New PID $(cat $PIDFILE) saved."
