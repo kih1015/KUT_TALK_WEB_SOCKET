@@ -61,3 +61,62 @@ int session_repository_find_id(
     if (out_exp) *out_exp = exp_val;
     return 0; /* 성공 */
 }
+
+char *session_repository_get_nick(uint32_t user_id) {
+    MYSQL *db = get_db();
+    if (!db) return NULL;
+
+    MYSQL_STMT *st = mysql_stmt_init(db);
+    const char *sql = "SELECT nickname FROM users WHERE id = ? LIMIT 1";
+    if (mysql_stmt_prepare(st, sql, strlen(sql)) != 0) {
+        mysql_stmt_close(st);
+        return NULL;
+    }
+
+    /* 파라미터 바인딩 */
+    MYSQL_BIND pb = {0};
+    pb.buffer_type = MYSQL_TYPE_LONG;
+    pb.buffer = &user_id;
+    if (mysql_stmt_bind_param(st, &pb) != 0) {
+        mysql_stmt_close(st);
+        return NULL;
+    }
+
+    if (mysql_stmt_execute(st) != 0) {
+        mysql_stmt_close(st);
+        return NULL;
+    }
+
+    /* 결과 메타·바인딩 */
+    MYSQL_RES *meta = mysql_stmt_result_metadata(st);
+    if (!meta) {
+        mysql_stmt_close(st);
+        return NULL;
+    }
+    MYSQL_BIND rb = {0};
+    /* nickname 최대 64자 가정 */
+    char nickbuf[64] = {0};
+    unsigned long nicklen = 0;
+    rb.buffer_type = MYSQL_TYPE_STRING;
+    rb.buffer = nickbuf;
+    rb.buffer_length = sizeof(nickbuf) - 1;
+    rb.length = &nicklen;
+    if (mysql_stmt_bind_result(st, &rb) != 0) {
+        mysql_free_result(meta);
+        mysql_stmt_close(st);
+        return NULL;
+    }
+
+    mysql_stmt_store_result(st);
+    char *result = NULL;
+    if (mysql_stmt_fetch(st) == 0 && nicklen > 0) {
+        /* strdup 으로 힙에 복사 */
+        result = malloc(nicklen + 1);
+        memcpy(result, nickbuf, nicklen);
+        result[nicklen] = '\0';
+    }
+
+    mysql_free_result(meta);
+    mysql_stmt_close(st);
+    return result;
+}
