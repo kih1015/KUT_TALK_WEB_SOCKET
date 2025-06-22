@@ -378,11 +378,14 @@ int chat_repo_get_unread_count_for_message(uint32_t room_id,
     MYSQL_STMT *st = mysql_stmt_init(db);
     if (!st) return -1;
 
+    // chat_message_unread 테이블과 chat_message 테이블을 조인해서 room_id로 필터링
     const char *sql =
-        "SELECT COUNT(*)\n"
-        "  FROM unread\n"
-        " WHERE room_id    = ?\n"
-        "   AND message_id = ?";
+        "SELECT COUNT(*) "
+        "  FROM chat_message_unread AS u "
+        "  JOIN chat_message        AS m "
+        "    ON m.id = u.message_id "
+        " WHERE m.room_id    = ? "
+        "   AND u.message_id = ?";
 
     if (mysql_stmt_prepare(st, sql, (unsigned long)strlen(sql)) != 0) {
         mysql_stmt_close(st);
@@ -394,18 +397,13 @@ int chat_repo_get_unread_count_for_message(uint32_t room_id,
     memset(params, 0, sizeof(params));
     params[0].buffer_type = MYSQL_TYPE_LONG;
     params[0].buffer      = &room_id;
-    params[0].is_null     = 0;
-    params[0].length      = 0;
     params[1].buffer_type = MYSQL_TYPE_LONG;
     params[1].buffer      = &message_id;
-    params[1].is_null     = 0;
-    params[1].length      = 0;
 
     if (mysql_stmt_bind_param(st, params) != 0) {
         mysql_stmt_close(st);
         return -1;
     }
-
     if (mysql_stmt_execute(st) != 0) {
         mysql_stmt_close(st);
         return -1;
@@ -417,15 +415,13 @@ int chat_repo_get_unread_count_for_message(uint32_t room_id,
     memset(&result, 0, sizeof(result));
     result.buffer_type = MYSQL_TYPE_LONG;
     result.buffer      = &cnt;
-    result.is_null     = 0;
-    result.length      = 0;
 
     if (mysql_stmt_bind_result(st, &result) != 0) {
         mysql_stmt_close(st);
         return -1;
     }
 
-    // fetch
+    // fetch 해서 cnt 채우기
     if (mysql_stmt_fetch(st) != 0) {
         mysql_stmt_close(st);
         return -1;
