@@ -124,10 +124,10 @@ static void notify_unread(uint32_t room, uint32_t msg_id, uint32_t sender) {
     free(members);
 }
 
-// 클라이언트 메시지/핑퐁 처리
 static void handle_client(client_t *cli) {
     int fd = cli->fd;
-    // 1) 핸드셰이크
+
+    /* 1) 핸드셰이크 */
     if (!cli->handshaked) {
         if (websocket_handshake(fd) == 0) {
             make_nonblock(fd);
@@ -142,27 +142,34 @@ static void handle_client(client_t *cli) {
         }
         return;
     }
-    // 2) 프레임 수신
+
+    /* 2) 프레임 수신 */
     ws_frame_t f;
-    if (ws_recv(fd, &f) < 0) goto disconnect;
-    // close 프레임
+    if (ws_recv(fd, &f) < 0) {
+        goto disconnect;
+    }
+
+    /* Close 코드 */
     if (f.opcode == 0x8) {
         free(f.payload);
         goto disconnect;
     }
-    // 3) JSON 파싱
+
+    /* 3) JSON 파싱 */
     cJSON *req = cJSON_ParseWithLength((char*)f.payload, f.len);
     if (req) {
+        // ——— JSON 메시지 받았으니 pong 대신 last_pong 갱신 ———
+        cli->last_pong = time(NULL);
+
         cJSON *jt = cJSON_GetObjectItem(req, "type");
         if (cJSON_IsString(jt)) {
-            // app-level pong 수신
+            // application‑level pong 처리
             if (strcmp(jt->valuestring, "pong") == 0) {
-                cli->last_pong = time(NULL);
                 cJSON_Delete(req);
                 free(f.payload);
                 return;
             }
-            // join
+            // join 처리
             if (strcmp(jt->valuestring, "join") == 0) {
                 const char *sid = cJSON_GetObjectItem(req, "sid")->valuestring;
                 int room        = cJSON_GetObjectItem(req, "room")->valueint;
@@ -183,7 +190,7 @@ static void handle_client(client_t *cli) {
                     broadcast_room(room, res);
                 }
             }
-            // leave
+            // leave 처리
             else if (strcmp(jt->valuestring, "leave") == 0) {
                 uint32_t rid = cli->room_id;
                 chat_repo_leave_room(rid, cli->user_id);
@@ -194,8 +201,8 @@ static void handle_client(client_t *cli) {
                 cJSON_AddNumberToObject(res, "user", cli->user_id);
                 broadcast_room(rid, res);
             }
-            // message
-            else if (strcmp(jt->valuestring, "message")==0) {
+            // message 처리
+            else if (strcmp(jt->valuestring, "message") == 0) {
                 const char *ct = cJSON_GetObjectItem(req, "content")->valuestring;
                 uint32_t mid;
                 chat_repo_save_message(cli->room_id, cli->user_id, ct, &mid);
@@ -217,7 +224,8 @@ static void handle_client(client_t *cli) {
         free(f.payload);
         return;
     }
-    // JSON 아니면 echo
+
+    /* JSON 아니면 echo */
     {
         uint8_t buf[2048];
         size_t bl = ws_build_text_frame(f.payload, f.len, buf);
@@ -231,6 +239,7 @@ disconnect:
     remove_client(cli);
     free(cli);
 }
+
 
 int main() {
     // DB 초기화
