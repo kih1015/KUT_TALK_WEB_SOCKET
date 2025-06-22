@@ -255,6 +255,10 @@ static void handle_client(client_t *cli) {
             }
             // message 처리
             else if (strcmp(jt->valuestring, "message") == 0) {
+            	// 0) content, mid 변수 선언
+            	const char *ct = cJSON_GetObjectItem(req, "content")->valuestring;
+            	uint32_t mid;
+
             	// 1) 메시지 저장
             	chat_repo_save_message(cli->room_id, cli->user_id, ct, &mid);
 
