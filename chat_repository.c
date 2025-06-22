@@ -277,11 +277,13 @@ int chat_repo_get_unread_counts_for_user(uint32_t room_id,
     if (!st) return -1;
 
     const char *sql =
-        "SELECT message_id, COUNT(*) AS cnt\n"
-        "  FROM chat_message_unread\n"
-        " WHERE room_id = ?\n"
-        "   AND user_id = ?\n"
-        " GROUP BY message_id";
+        "SELECT u.message_id, COUNT(*) AS cnt "
+        "  FROM chat_message_unread AS u "
+        "  JOIN chat_message        AS m "
+        "    ON m.id = u.message_id "
+        " WHERE m.room_id  = ? "
+        "   AND u.user_id  = ? "
+        " GROUP BY u.message_id";
 
     if (mysql_stmt_prepare(st, sql, (unsigned long)strlen(sql)) != 0) {
         mysql_stmt_close(st);
