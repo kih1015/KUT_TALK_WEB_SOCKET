@@ -209,3 +209,57 @@ int chat_repo_get_room_members(
     *out_count = n;
     return 0;
 }
+
+/* ── 방의 모든 메시지별 언리드 카운트 ── */
+int chat_repo_get_unread_counts(
+    uint32_t room_id,
+    chat_unread_t **out_array,
+    size_t *out_count
+) {
+    MYSQL *db = get_db();
+    if (!db) return -1;
+
+    char sql[256];
+    snprintf(sql, sizeof sql,
+        "SELECT m.id, COUNT(u.user_id) "
+        "FROM chat_message m "
+        "LEFT JOIN chat_message_unread u ON u.message_id=m.id "
+        "WHERE m.room_id=%u "
+        "GROUP BY m.id",
+        room_id);
+
+    if (mysql_query(db, sql)) return -2;
+    MYSQL_RES *res = mysql_store_result(db);
+    size_t n = mysql_num_rows(res);
+
+    chat_unread_t *arr = calloc(n, sizeof(chat_unread_t));
+    MYSQL_ROW row;
+    size_t i = 0;
+    while ((row = mysql_fetch_row(res))) {
+        arr[i].message_id = (uint32_t)atoi(row[0]);
+        arr[i].count      = (uint32_t)atoi(row[1]);
+        i++;
+    }
+    mysql_free_result(res);
+    *out_array  = arr;
+    *out_count  = n;
+    return 0;
+}
+
+/* ── 메시지별 전체 언리드 카운트 ── */
+int chat_repo_count_message_unread(uint32_t message_id, uint32_t *out_count) {
+    MYSQL *db = get_db();
+    if (!db) return -1;
+
+    char sql[128];
+    snprintf(sql, sizeof sql,
+        "SELECT COUNT(*) FROM chat_message_unread WHERE message_id=%u",
+        message_id);
+
+    if (mysql_query(db, sql)) return -2;
+    MYSQL_RES *res = mysql_store_result(db);
+    MYSQL_ROW row = mysql_fetch_row(res);
+    *out_count = row ? (uint32_t)atoi(row[0]) : 0;
+    mysql_free_result(res);
+    return 0;
+}

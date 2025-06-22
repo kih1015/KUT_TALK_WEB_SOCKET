@@ -14,6 +14,11 @@ typedef struct {
     uint32_t unread_cnt;
 } chat_room_t;
 
+typedef struct {
+    uint32_t message_id;
+    uint32_t count;
+} chat_unread_t;
+
 /* 메시지 정보 */
 typedef struct {
     uint32_t id;
@@ -62,3 +67,13 @@ int chat_repo_get_room_members(
     uint32_t **out_user_ids,
     size_t *out_count
 );
+
+/* ── 방의 모든 메시지별 언리드 카운트 ── */
+int chat_repo_get_unread_counts(
+    uint32_t room_id,
+    chat_unread_t **out_array,
+    size_t *out_count
+);
+
+/* ── 메시지별 전체 언리드 카운트 ── */
+int chat_repo_count_message_unread(uint32_t message_id, uint32_t *out_count);

@@ -180,7 +180,7 @@ static void handle_client(client_t *cli) {
                 free(f.payload);
                 return;
             }
-			if (strcmp(jt->valuestring, "auth") == 0) {
+			else if (strcmp(jt->valuestring, "auth") == 0) {
            		const char *sid = cJSON_GetObjectItem(req, "sid")->valuestring;
            		uint32_t uid; time_t exp;
            		if (session_repository_find_id(sid, &uid, &exp) == 0) {
@@ -194,7 +194,7 @@ static void handle_client(client_t *cli) {
            		return;
        		}
             // join 처리
-			if (strcmp(jt->valuestring, "join") == 0) {
+			else if (strcmp(jt->valuestring, "join") == 0) {
     			const char *sid = cJSON_GetObjectItem(req, "sid")->valuestring;
     			int room        = cJSON_GetObjectItem(req, "room")->valueint;
     			uint32_t uid; time_t exp;
@@ -225,6 +225,22 @@ static void handle_client(client_t *cli) {
         			}
         			free(m);
         			broadcast_room(room, res);
+
+            		// 5) 가입한 클라이언트에게 방 내 모든 메시지별 언리드 수 전송
+            		{
+                		chat_unread_t *unreads;
+                		size_t ucnt;
+                		if (chat_repo_get_unread_counts(room, &unreads, &ucnt) == 0) {
+                    		for (size_t j = 0; j < ucnt; j++) {
+                        		cJSON *upd = cJSON_CreateObject();
+                        		cJSON_AddStringToObject(upd, "type",      "updated-message");
+                        		cJSON_AddNumberToObject(upd, "id",        unreads[j].message_id);
+                        		cJSON_AddNumberToObject(upd, "unread_cnt",unreads[j].count);
+                        		send_json(cli, upd);
+                    		}
+                    		free(unreads);
+                		}
+            		}
     			}
 			}
             // leave 처리
@@ -239,21 +255,31 @@ static void handle_client(client_t *cli) {
             }
             // message 처리
             else if (strcmp(jt->valuestring, "message") == 0) {
-                const char *ct = cJSON_GetObjectItem(req, "content")->valuestring;
-                uint32_t mid;
-                chat_repo_save_message(cli->room_id, cli->user_id, ct, &mid);
-                cJSON *res = cJSON_CreateObject();
-                cJSON_AddStringToObject(res, "type", "message");
-                cJSON_AddNumberToObject(res, "room", cli->room_id);
-                cJSON_AddNumberToObject(res, "id", mid);
-                cJSON_AddNumberToObject(res, "sender", cli->user_id);
-                char *nick = session_repository_get_nick(cli->user_id);
-                cJSON_AddStringToObject(res, "nick", nick);
-                free(nick);
-                cJSON_AddStringToObject(res, "content", ct);
-                cJSON_AddNumberToObject(res, "ts", time(NULL));
-                broadcast_room(cli->room_id, res);
-                notify_unread(cli->room_id, mid, cli->user_id);
+            	// 1) 메시지 저장
+            	chat_repo_save_message(cli->room_id, cli->user_id, ct, &mid);
+
+            	// 2) 언리드 테이블에 신규 엔트리 추가 (오프라인 사용자용)
+            	notify_unread(cli->room_id, mid, cli->user_id);
+
+            	// 3) 이 메시지의 현재 언리드 수 조회
+            	uint32_t unread_cnt = 0;
+            	chat_repo_count_message_unread(mid, &unread_cnt);
+
+            	// 4) 브로드캐스트 메시지에 unread_cnt 포함
+            	cJSON *res = cJSON_CreateObject();
+            	cJSON_AddStringToObject(res, "type",       "message");
+            	cJSON_AddNumberToObject(res, "room",       cli->room_id);
+            	cJSON_AddNumberToObject(res, "id",         mid);
+            	cJSON_AddNumberToObject(res, "sender",     cli->user_id);
+            	{
+                	char *nick = session_repository_get_nick(cli->user_id);
+                	cJSON_AddStringToObject(res, "nick", nick);
+                	free(nick);
+            	}
+            	cJSON_AddStringToObject(res, "content",    ct);
+            	cJSON_AddNumberToObject(res, "ts",         time(NULL));
+            	cJSON_AddNumberToObject(res, "unread_cnt", unread_cnt);
+            	broadcast_room(cli->room_id, res);
             }
         }
         cJSON_Delete(req);
