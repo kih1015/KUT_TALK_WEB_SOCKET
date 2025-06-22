@@ -12,10 +12,3 @@ typedef struct {
 int ws_recv(int fd, ws_frame_t *out);
 
 size_t ws_build_text_frame(const uint8_t *msg, size_t len, uint8_t *out);
-
-size_t ws_build_control_frame(uint8_t opcode, const uint8_t *payload, size_t len, uint8_t *buf);
-
-size_t ws_build_frame(uint8_t opcode,
-                      const uint8_t *payload,
-                      size_t len,
-                      uint8_t *buf);
