@@ -101,28 +101,59 @@ static void broadcast_room(int room, cJSON *msg) {
 
 // Unread 알림
 static void notify_unread(uint32_t room, uint32_t msg_id, uint32_t sender) {
-    uint32_t *members; size_t cnt;
-    if (chat_repo_get_room_members(room, &members, &cnt) != 0) return;
+    // 1) DB에 방 멤버 전체 조회
+    uint32_t *members;
+    size_t   cnt;
+    if (chat_repo_get_room_members(room, &members, &cnt) != 0) {
+        return;
+    }
+
+    pthread_mutex_lock(&clients_mtx);
+
+    // 2) DB에 unread 추가: sender가 아니면서 "현재 방에 접속 중"이 아닌 유저만
     for (size_t i = 0; i < cnt; i++) {
         uint32_t uid = members[i];
         if (uid == sender) continue;
-        chat_repo_add_unread(msg_id, uid);
-        pthread_mutex_lock(&clients_mtx);
+
+        // 이 uid가 현재 방(room)에 접속 중인지 확인
+        bool online_in_room = false;
         for (client_t *c = clients; c; c = c->next) {
-            if (c->user_id == uid && c->room_id != (int)room) {
-                uint32_t ucnt = 0;
-                chat_repo_count_unread(room, uid, &ucnt);
-                cJSON *n = cJSON_CreateObject();
-                cJSON_AddStringToObject(n, "type", "unread");
-                cJSON_AddNumberToObject(n, "room", room);
-                cJSON_AddNumberToObject(n, "count", ucnt);
-                send_json(c, n);
+            if (c->handshaked
+                && (uint32_t)c->user_id == uid
+                && c->room_id == (int)room)
+            {
+                online_in_room = true;
+                break;
             }
         }
-        pthread_mutex_unlock(&clients_mtx);
+        if (!online_in_room) {
+            // 방에 없으면 DB에 unread 추가
+            chat_repo_add_unread(msg_id, uid);
+        }
     }
+
+    // 3) 현재 접속 중이지만 "다른 방"에 있는 클라이언트에게만 알림
+    for (client_t *c = clients; c; c = c->next) {
+        if (!c->handshaked) continue;
+        if ((uint32_t)c->user_id == sender) continue;
+        if (c->room_id == (int)room) continue;
+
+        // DB에서 실제 언리드 카운트 조회
+        uint32_t ucnt = 0;
+        chat_repo_count_unread(room, c->user_id, &ucnt);
+
+        // JSON 알림 전송
+        cJSON *n = cJSON_CreateObject();
+        cJSON_AddStringToObject(n, "type",  "unread");
+        cJSON_AddNumberToObject(n, "room",  room);
+        cJSON_AddNumberToObject(n, "count", ucnt);
+        send_json(c, n);
+    }
+
+    pthread_mutex_unlock(&clients_mtx);
     free(members);
 }
+
 
 static void handle_client(client_t *cli) {
     int fd = cli->fd;
@@ -193,7 +224,6 @@ static void handle_client(client_t *cli) {
             // leave 처리
             else if (strcmp(jt->valuestring, "leave") == 0) {
                 uint32_t rid = cli->room_id;
-                chat_repo_leave_room(rid, cli->user_id);
                 cli->room_id = 0;
                 cJSON *res = cJSON_CreateObject();
                 cJSON_AddStringToObject(res, "type", "left");
