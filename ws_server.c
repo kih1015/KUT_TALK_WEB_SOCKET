@@ -99,6 +99,33 @@ static void broadcast_room(int room, cJSON *msg) {
     free(frame);
 }
 
+// ─── 전체 클라이언트에 브로드캐스트 ───
+static void broadcast_all(cJSON *msg) {
+    // 1) JSON -> text
+    char *text = cJSON_PrintUnformatted(msg);
+    size_t len = strlen(text);
+
+    // 2) text -> WebSocket frame
+    uint8_t *frame = malloc(len + 16);
+    size_t flen  = ws_build_text_frame((uint8_t*)text, len, frame);
+
+    // 3) 원본 cJSON 및 text 메모리 해제
+    free(text);
+    cJSON_Delete(msg);
+
+    // 4) clients 리스트를 돌며 손님에게 전송
+    pthread_mutex_lock(&clients_mtx);
+    for (client_t *c = clients; c; c = c->next) {
+        if (c->handshaked) {
+            writen(c->fd, frame, flen);
+        }
+    }
+    pthread_mutex_unlock(&clients_mtx);
+
+    // 5) frame 버퍼 해제
+    free(frame);
+}
+
 // Unread 알림
 static void notify_unread(uint32_t room, uint32_t msg_id, uint32_t sender) {
     pthread_mutex_lock(&clients_mtx);
@@ -347,6 +374,15 @@ static void handle_client(client_t *cli) {
             	cJSON_AddNumberToObject(res, "ts",         time(NULL));
             	cJSON_AddNumberToObject(res, "unread_cnt", unread_cnt);
             	broadcast_room(cli->room_id, res);
+            }
+            // ─── 방 정보 업데이트 요청 처리 ───
+            else if (strcmp(jt->valuestring, "update-chat-room") == 0) {
+                // 응답 메시지 생성
+                cJSON *res = cJSON_CreateObject();
+                cJSON_AddStringToObject(res, "type", "updated-chat-room");  // broadcast할 때는 오타 없이 이 문자열로!
+
+                // 전체 클라이언트에 브로드캐스트
+                broadcast_all(res);
             }
         }
         cJSON_Delete(req);
