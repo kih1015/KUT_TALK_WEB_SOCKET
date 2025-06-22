@@ -13,7 +13,7 @@ int db_global_init(const char *host, const char *user,
 void db_global_end(void);
 
 /* -------- 스레드 전용 초기화 / 종료 -------- */
-int db_thread_init(void); /* 성공 0, 실패 <0 */
+int db_thread_init(void);
 void db_thread_cleanup(void);
 
 /* -------- 현재 스레드용 커넥션 핸들 -------- */
