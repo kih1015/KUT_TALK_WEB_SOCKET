@@ -180,6 +180,19 @@ static void handle_client(client_t *cli) {
                 free(f.payload);
                 return;
             }
+			if (strcmp(jt->valuestring, "auth") == 0) {
+           		const char *sid = cJSON_GetObjectItem(req, "sid")->valuestring;
+           		uint32_t uid; time_t exp;
+           		if (session_repository_find_id(sid, &uid, &exp) == 0) {
+               		cli->user_id = uid;
+               		cJSON *ok = cJSON_CreateObject();
+               		cJSON_AddStringToObject(ok, "type", "auth_ok");
+               		send_json(cli, ok);
+           		}
+           		cJSON_Delete(req);
+           		free(f.payload);
+           		return;
+       		}
             // join 처리
 			if (strcmp(jt->valuestring, "join") == 0) {
     			const char *sid = cJSON_GetObjectItem(req, "sid")->valuestring;
