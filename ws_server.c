@@ -263,8 +263,8 @@ int main() {
 
     /* listen + epoll 생성 */
     int lfd = tcp_listen(PORT);
-    int ep = epoll_create1(0);
-    struct epoll_event ev = {.events = EPOLLIN, .data.fd = lfd};
+    int ep  = epoll_create1(0);
+    struct epoll_event ev = { .events = EPOLLIN, .data.fd = lfd };
     epoll_ctl(ep, EPOLL_CTL_ADD, lfd, &ev);
 
     printf("Listening on :%d\n", PORT);
@@ -273,7 +273,7 @@ int main() {
     time_t last_ping = time(NULL);
 
     while (1) {
-        int n = epoll_wait(ep, events, MAX_EVENTS, 1000); // 1초 타임아웃
+        int n = epoll_wait(ep, events, MAX_EVENTS, 1000);
         if (n < 0 && errno == EINTR) continue;
 
         /* 이벤트 처리 */
@@ -282,14 +282,14 @@ int main() {
                 int cfd = accept(lfd, NULL, NULL);
                 make_nonblock(cfd);
                 client_t *cli = calloc(1, sizeof(*cli));
-                cli->fd = cfd;
-                cli->handshaked = 0;
-                cli->last_pong = time(NULL);
+                cli->fd          = cfd;
+                cli->handshaked  = 0;
+                cli->last_pong   = time(NULL);
                 pthread_mutex_lock(&clients_mtx);
                 cli->next = clients;
-                clients = cli;
+                clients   = cli;
                 pthread_mutex_unlock(&clients_mtx);
-                struct epoll_event cev = {.events = EPOLLIN, .data.ptr = cli};
+                struct epoll_event cev = { .events = EPOLLIN, .data.ptr = cli };
                 epoll_ctl(ep, EPOLL_CTL_ADD, cfd, &cev);
             } else {
                 client_t *cli = events[i].data.ptr;
@@ -299,31 +299,31 @@ int main() {
 
         time_t now = time(NULL);
 
-        /* 1) 주기적으로 ping 전송 */
+        /* 1) 주기적으로 애플리케이션 레벨 ping(JSON) 전송 */
         if (now - last_ping >= PING_INTERVAL) {
             pthread_mutex_lock(&clients_mtx);
             for (client_t *c = clients; c; c = c->next) {
                 if (c->handshaked) {
-                    uint8_t frame[16];
-                    size_t flen = ws_build_control_frame(0x9, NULL, 0, frame);
-                    writen(c->fd, frame, flen);
+                    cJSON *ping = cJSON_CreateObject();
+                    cJSON_AddStringToObject(ping, "type", "ping");
+                    send_json(c, ping);
                 }
             }
             pthread_mutex_unlock(&clients_mtx);
             last_ping = now;
         }
 
-        /* 2) pong 타임아웃 검사 */
+        /* 2) 애플리케이션 레벨 pong 타임아웃 검사 */
         pthread_mutex_lock(&clients_mtx);
         client_t *prev = NULL, *c = clients;
         while (c) {
             client_t *next = c->next;
             if (c->handshaked && (now - c->last_pong) > PONG_TIMEOUT) {
-                // 연결 종료
+                /* 연결 종료 */
                 epoll_ctl(ep, EPOLL_CTL_DEL, c->fd, NULL);
                 close(c->fd);
                 if (prev) prev->next = next;
-                else clients = next;
+                else clients       = next;
                 free(c);
             } else {
                 prev = c;
