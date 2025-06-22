@@ -1,3 +1,5 @@
+// ws_server.c
+
 #include <errno.h>
 #include <fcntl.h>
 #include <pthread.h>
@@ -19,10 +21,10 @@
 #include "chat_repository.h"
 #include "db.h"
 
-#define PORT            8090
-#define MAX_EVENTS      1024
-#define PING_INTERVAL   3   // seconds
-#define PONG_TIMEOUT    3   // seconds
+#define PORT         8090
+#define MAX_EVENTS   1024
+#define PING_INTERVAL 3   // seconds
+#define PONG_TIMEOUT  3   // seconds
 
 typedef struct client {
     int            fd;
@@ -36,11 +38,13 @@ typedef struct client {
 static client_t *clients = NULL;
 static pthread_mutex_t clients_mtx = PTHREAD_MUTEX_INITIALIZER;
 
+// 논블로킹 소켓
 static int make_nonblock(int fd) {
     int flags = fcntl(fd, F_GETFL, 0);
     return fcntl(fd, F_SETFL, flags | O_NONBLOCK);
 }
 
+// TCP listening socket
 static int tcp_listen(int port) {
     int fd = socket(AF_INET, SOCK_STREAM, 0);
     int yes = 1;
@@ -55,18 +59,16 @@ static int tcp_listen(int port) {
     return fd;
 }
 
+// 클라이언트 제거
 static void remove_client(client_t *cli) {
     pthread_mutex_lock(&clients_mtx);
     client_t **p = &clients;
-    while (*p && *p != cli) {
-        p = &(*p)->next;
-    }
-    if (*p) {
-        *p = cli->next;
-    }
+    while (*p && *p != cli) p = &(*p)->next;
+    if (*p) *p = cli->next;
     pthread_mutex_unlock(&clients_mtx);
 }
 
+// JSON 전송 헬퍼
 static void send_json(client_t *cli, cJSON *msg) {
     char *text = cJSON_PrintUnformatted(msg);
     size_t len  = strlen(text);
@@ -78,6 +80,7 @@ static void send_json(client_t *cli, cJSON *msg) {
     cJSON_Delete(msg);
 }
 
+// 방 브로드캐스트
 static void broadcast_room(int room, cJSON *msg) {
     char *text = cJSON_PrintUnformatted(msg);
     size_t len  = strlen(text);
@@ -96,12 +99,10 @@ static void broadcast_room(int room, cJSON *msg) {
     free(frame);
 }
 
+// Unread 알림
 static void notify_unread(uint32_t room, uint32_t msg_id, uint32_t sender) {
-    uint32_t *members;
-    size_t   cnt;
-    if (chat_repo_get_room_members(room, &members, &cnt) != 0) {
-        return;
-    }
+    uint32_t *members; size_t cnt;
+    if (chat_repo_get_room_members(room, &members, &cnt) != 0) return;
     for (size_t i = 0; i < cnt; i++) {
         uint32_t uid = members[i];
         if (uid == sender) continue;
@@ -112,8 +113,8 @@ static void notify_unread(uint32_t room, uint32_t msg_id, uint32_t sender) {
                 uint32_t ucnt = 0;
                 chat_repo_count_unread(room, uid, &ucnt);
                 cJSON *n = cJSON_CreateObject();
-                cJSON_AddStringToObject(n, "type",  "unread");
-                cJSON_AddNumberToObject(n, "room",  room);
+                cJSON_AddStringToObject(n, "type", "unread");
+                cJSON_AddNumberToObject(n, "room", room);
                 cJSON_AddNumberToObject(n, "count", ucnt);
                 send_json(c, n);
             }
@@ -123,9 +124,10 @@ static void notify_unread(uint32_t room, uint32_t msg_id, uint32_t sender) {
     free(members);
 }
 
+// 클라이언트 메시지/핑퐁 처리
 static void handle_client(client_t *cli) {
     int fd = cli->fd;
-
+    // 1) 핸드셰이크
     if (!cli->handshaked) {
         if (websocket_handshake(fd) == 0) {
             make_nonblock(fd);
@@ -140,22 +142,20 @@ static void handle_client(client_t *cli) {
         }
         return;
     }
-
+    // 2) 프레임 수신
     ws_frame_t f;
-    if (ws_recv(fd, &f) < 0) {
-        goto disconnect;
-    }
-
+    if (ws_recv(fd, &f) < 0) goto disconnect;
+    // close 프레임
     if (f.opcode == 0x8) {
         free(f.payload);
         goto disconnect;
     }
-
+    // 3) JSON 파싱
     cJSON *req = cJSON_ParseWithLength((char*)f.payload, f.len);
     if (req) {
         cJSON *jt = cJSON_GetObjectItem(req, "type");
         if (cJSON_IsString(jt)) {
-            // application‑level pong
+            // app-level pong 수신
             if (strcmp(jt->valuestring, "pong") == 0) {
                 cli->last_pong = time(NULL);
                 cJSON_Delete(req);
@@ -195,7 +195,7 @@ static void handle_client(client_t *cli) {
                 broadcast_room(rid, res);
             }
             // message
-            else if (strcmp(jt->valuestring, "message") == 0) {
+            else if (strcmp(jt->valuestring, "message")==0) {
                 const char *ct = cJSON_GetObjectItem(req, "content")->valuestring;
                 uint32_t mid;
                 chat_repo_save_message(cli->room_id, cli->user_id, ct, &mid);
@@ -217,7 +217,7 @@ static void handle_client(client_t *cli) {
         free(f.payload);
         return;
     }
-
+    // JSON 아니면 echo
     {
         uint8_t buf[2048];
         size_t bl = ws_build_text_frame(f.payload, f.len, buf);
@@ -233,7 +233,7 @@ disconnect:
 }
 
 int main() {
-    /* DB 초기화 */
+    // DB 초기화
     const char *db_user = getenv("DB_USER");
     const char *db_pass = getenv("DB_PASS");
     if (!db_user || !db_pass) {
@@ -250,7 +250,7 @@ int main() {
         return EXIT_FAILURE;
     }
 
-    /* listen + epoll 생성 */
+    // listen + epoll
     int lfd = tcp_listen(PORT);
     int ep  = epoll_create1(0);
     struct epoll_event ev = { .events = EPOLLIN, .data.fd = lfd };
@@ -287,7 +287,7 @@ int main() {
 
         time_t now = time(NULL);
 
-        /* 1) 주기적으로 애플리케이션 레벨 ping(JSON) 전송 */
+        // 1) app-level ping 전송
         if (now - last_ping >= PING_INTERVAL) {
             pthread_mutex_lock(&clients_mtx);
             for (client_t *c = clients; c; c = c->next) {
@@ -301,7 +301,7 @@ int main() {
             last_ping = now;
         }
 
-        /* 2) 애플리케이션 레벨 pong 타임아웃 검사 */
+        // 2) app-level pong 타임아웃 검사
         pthread_mutex_lock(&clients_mtx);
         client_t *prev = NULL, *c = clients;
         while (c) {
