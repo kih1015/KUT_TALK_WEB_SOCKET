@@ -236,7 +236,7 @@ static void handle_client(client_t *cli) {
                         		cJSON_AddStringToObject(upd, "type",      "updated-message");
                         		cJSON_AddNumberToObject(upd, "id",        unreads[j].message_id);
                         		cJSON_AddNumberToObject(upd, "unread_cnt",unreads[j].count);
-                        		send_json(cli, upd);
+                        		broadcast_room(room, upd);
                     		}
                     		free(unreads);
                 		}
@@ -262,14 +262,31 @@ static void handle_client(client_t *cli) {
             	// 1) 메시지 저장
             	chat_repo_save_message(cli->room_id, cli->user_id, ct, &mid);
 
-    			// 2) 방의 모든 멤버에 대해 unread 테이블 업데이트 (발신자 제외)
+    			// 2) DB에 unread 추가: “같은 방에 접속 중이지 않은” 멤버만
     			{
         			uint32_t *members;
-       				size_t   mcnt;
+        			size_t    mcnt;
         			if (chat_repo_get_room_members(cli->room_id, &members, &mcnt) == 0) {
             			for (size_t i = 0; i < mcnt; i++) {
                 			uint32_t uid = members[i];
-                			if (uid != cli->user_id) {
+                			if (uid == cli->user_id) continue;
+
+                			// 현재 같은 방에 접속 중인지 확인
+                			bool is_online = false;
+                			pthread_mutex_lock(&clients_mtx);
+                			for (client_t *c = clients; c; c = c->next) {
+                    			if (c->handshaked
+                        			&& c->user_id == uid
+                        			&& c->room_id == cli->room_id)
+                    			{
+                        			is_online = true;
+                       				break;
+                    			}
+                			}
+                			pthread_mutex_unlock(&clients_mtx);
+
+                			// 오프라인(또는 다른 방에 있는) 멤버만 unread 추가
+                			if (!is_online) {
                     			chat_repo_add_unread(mid, uid);
                 			}
             			}
