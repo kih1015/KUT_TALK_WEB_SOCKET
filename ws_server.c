@@ -101,59 +101,76 @@ static void broadcast_room(int room, cJSON *msg) {
 
 // Unread 알림
 static void notify_unread(uint32_t room, uint32_t msg_id, uint32_t sender) {
-    // 1) DB에 방 멤버 전체 조회
+    // 1) 이 방의 모든 멤버를 DB에서 불러온다
     uint32_t *members;
     size_t   cnt;
     if (chat_repo_get_room_members(room, &members, &cnt) != 0) {
         return;
     }
 
+    // 2) "현재 방에 접속 중"인 사용자 목록을 뽑아놓는다
     pthread_mutex_lock(&clients_mtx);
+    client_t *c = clients;
+    pthread_mutex_unlock(&clients_mtx);
 
-    // 2) DB에 unread 추가: sender가 아니면서 "현재 방에 접속 중"이 아닌 유저만
+    // 3) 오프라인(또는 다른 방) 멤버에게만 unread DB 추가
     for (size_t i = 0; i < cnt; i++) {
         uint32_t uid = members[i];
         if (uid == sender) continue;
 
-        // 이 uid가 현재 방(room)에 접속 중인지 확인
+        // 이 uid가 "현재 방(room)"에 접속 중인지 확인
         bool online_in_room = false;
-        for (client_t *c = clients; c; c = c->next) {
-            if (c->handshaked
-                && (uint32_t)c->user_id == uid
-                && c->room_id == (int)room)
+        pthread_mutex_lock(&clients_mtx);
+        for (client_t *ci = clients; ci; ci = ci->next) {
+            if (ci->handshaked
+                && (uint32_t)ci->user_id == uid
+                && ci->room_id == (int)room)
             {
                 online_in_room = true;
                 break;
             }
         }
+        pthread_mutex_unlock(&clients_mtx);
+
         if (!online_in_room) {
-            // 방에 없으면 DB에 unread 추가
-            chat_repo_add_unread(msg_id, uid);
+            int rc = chat_repo_add_unread(msg_id, uid);
+            if (rc != 0) {
+                fprintf(stderr,
+                    "ERROR: chat_repo_add_unread failed (room=%u, msg=%u, uid=%u) rc=%d\n",
+                    room, msg_id, uid, rc
+                );
+            }
         }
     }
 
-    // 3) 현재 접속 중이지만 "다른 방"에 있는 클라이언트에게만 알림
-    for (client_t *c = clients; c; c = c->next) {
-        if (!c->handshaked) continue;
-        if ((uint32_t)c->user_id == sender) continue;
-        if (c->room_id == (int)room) continue;
+    free(members);
 
-        // DB에서 실제 언리드 카운트 조회
+    // 4) 현재 접속 중이지만 "다른 방"에 있는 클라이언트에게만 JSON 알림
+    pthread_mutex_lock(&clients_mtx);
+    for (client_t *ci = clients; ci; ci = ci->next) {
+        if (!ci->handshaked)                      continue;
+        if ((uint32_t)ci->user_id == sender)      continue;
+        if (ci->room_id == (int)room)             continue;
+
+        // DB에서 실제 남은 unread 수 조회
         uint32_t ucnt = 0;
-        chat_repo_count_unread(room, c->user_id, &ucnt);
+        if (chat_repo_count_unread(room, ci->user_id, &ucnt) != 0) {
+            fprintf(stderr,
+                "ERROR: chat_repo_count_unread failed (room=%u, uid=%u)\n",
+                room, ci->user_id
+            );
+            continue;
+        }
 
-        // JSON 알림 전송
+        // JSON으로 알림 전송
         cJSON *n = cJSON_CreateObject();
         cJSON_AddStringToObject(n, "type",  "unread");
         cJSON_AddNumberToObject(n, "room",  room);
         cJSON_AddNumberToObject(n, "count", ucnt);
-        send_json(c, n);
+        send_json(ci, n);
     }
-
     pthread_mutex_unlock(&clients_mtx);
-    free(members);
 }
-
 
 static void handle_client(client_t *cli) {
     int fd = cli->fd;
