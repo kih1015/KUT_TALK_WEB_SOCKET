@@ -278,7 +278,7 @@ int chat_repo_get_unread_counts_for_user(uint32_t room_id,
 
     const char *sql =
         "SELECT message_id, COUNT(*) AS cnt\n"
-        "  FROM unread\n"
+        "  FROM chat_message_unread\n"
         " WHERE room_id = ?\n"
         "   AND user_id = ?\n"
         " GROUP BY message_id";
