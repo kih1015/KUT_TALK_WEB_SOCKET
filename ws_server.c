@@ -262,7 +262,21 @@ static void handle_client(client_t *cli) {
             	// 1) 메시지 저장
             	chat_repo_save_message(cli->room_id, cli->user_id, ct, &mid);
 
-            	// 2) 언리드 테이블에 신규 엔트리 추가 (오프라인 사용자용)
+    			// 2) 방의 모든 멤버에 대해 unread 테이블 업데이트 (발신자 제외)
+    			{
+        			uint32_t *members;
+       				size_t   mcnt;
+        			if (chat_repo_get_room_members(cli->room_id, &members, &mcnt) == 0) {
+            			for (size_t i = 0; i < mcnt; i++) {
+                			uint32_t uid = members[i];
+                			if (uid != cli->user_id) {
+                    			chat_repo_add_unread(mid, uid);
+                			}
+            			}
+            			free(members);
+        			}
+    			}
+
             	notify_unread(cli->room_id, mid, cli->user_id);
 
             	// 3) 이 메시지의 현재 언리드 수 조회
