@@ -77,3 +77,11 @@ int chat_repo_get_unread_counts(
 
 /* ── 메시지별 전체 언리드 카운트 ── */
 int chat_repo_count_message_unread(uint32_t message_id, uint32_t *out_count);
+
+int chat_repo_get_unread_counts_for_user(uint32_t room_id,
+                                         uint32_t user_id,
+                                         chat_unread_t **out_unreads,
+                                         size_t       *out_count);
+
+int chat_repo_get_unread_count_for_message(uint32_t room_id,
+                                           uint32_t message_id);

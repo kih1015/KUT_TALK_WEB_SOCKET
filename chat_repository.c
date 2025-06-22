@@ -264,3 +264,171 @@ int chat_repo_count_message_unread(uint32_t message_id, uint32_t *out_count) {
     mysql_free_result(res);
     return 0;
 }
+
+int chat_repo_get_unread_counts_for_user(uint32_t room_id,
+                                         uint32_t user_id,
+                                         chat_unread_t **out_unreads,
+                                         size_t       *out_count)
+{
+    MYSQL     *db = get_db();
+    if (!db) return -1;
+
+    MYSQL_STMT *st = mysql_stmt_init(db);
+    if (!st) return -1;
+
+    const char *sql =
+        "SELECT message_id, COUNT(*) AS cnt\n"
+        "  FROM unread\n"
+        " WHERE room_id = ?\n"
+        "   AND user_id = ?\n"
+        " GROUP BY message_id";
+
+    if (mysql_stmt_prepare(st, sql, (unsigned long)strlen(sql)) != 0) {
+        mysql_stmt_close(st);
+        return -1;
+    }
+
+    /* --- 파라미터 바인딩(room_id, user_id) --- */
+    MYSQL_BIND param[2];
+    memset(param, 0, sizeof(param));
+
+    param[0].buffer_type   = MYSQL_TYPE_LONG;
+    param[0].buffer        = &room_id;
+    param[0].is_null       = 0;
+    param[0].length        = 0;
+
+    param[1].buffer_type   = MYSQL_TYPE_LONG;
+    param[1].buffer        = &user_id;
+    param[1].is_null       = 0;
+    param[1].length        = 0;
+
+    if (mysql_stmt_bind_param(st, param) != 0) {
+        mysql_stmt_close(st);
+        return -1;
+    }
+
+    if (mysql_stmt_execute(st) != 0) {
+        mysql_stmt_close(st);
+        return -1;
+    }
+
+    /* --- 결과 메타데이터 준비 & 전체 행 수 조회 --- */
+    mysql_stmt_store_result(st);
+    size_t n = (size_t)mysql_stmt_num_rows(st);
+    if (n == 0) {
+        /* 읽지 않은 메시지가 없으면 빈 배열 반환 */
+        *out_unreads = NULL;
+        *out_count   = 0;
+        mysql_stmt_close(st);
+        return 0;
+    }
+
+    /* 메모리 할당 */
+    chat_unread_t *arr = calloc(n, sizeof(chat_unread_t));
+    if (!arr) {
+        mysql_stmt_close(st);
+        return -1;
+    }
+
+    /* --- 결과 바인딩(message_id, cnt) --- */
+    uint32_t tmp_mid;
+    uint32_t tmp_cnt;
+    MYSQL_BIND result[2];
+    memset(result, 0, sizeof(result));
+
+    result[0].buffer_type   = MYSQL_TYPE_LONG;
+    result[0].buffer        = &tmp_mid;
+    result[0].is_null       = 0;
+    result[0].length        = 0;
+
+    result[1].buffer_type   = MYSQL_TYPE_LONG;
+    result[1].buffer        = &tmp_cnt;
+    result[1].is_null       = 0;
+    result[1].length        = 0;
+
+    if (mysql_stmt_bind_result(st, result) != 0) {
+        free(arr);
+        mysql_stmt_close(st);
+        return -1;
+    }
+
+    /* --- fetch 루프 --- */
+    size_t idx = 0;
+    while (idx < n && mysql_stmt_fetch(st) == 0) {
+        arr[idx].message_id = tmp_mid;
+        arr[idx].count      = tmp_cnt;
+        idx++;
+    }
+
+    mysql_stmt_close(st);
+
+    *out_unreads = arr;
+    *out_count   = idx; // 실제 읽어온 행 개수
+    return 0;
+}
+
+int chat_repo_get_unread_count_for_message(uint32_t room_id,
+                                           uint32_t message_id)
+{
+    MYSQL      *db = get_db();
+    if (!db) return -1;
+
+    MYSQL_STMT *st = mysql_stmt_init(db);
+    if (!st) return -1;
+
+    const char *sql =
+        "SELECT COUNT(*)\n"
+        "  FROM unread\n"
+        " WHERE room_id    = ?\n"
+        "   AND message_id = ?";
+
+    if (mysql_stmt_prepare(st, sql, (unsigned long)strlen(sql)) != 0) {
+        mysql_stmt_close(st);
+        return -1;
+    }
+
+    // 파라미터 바인딩(room_id, message_id)
+    MYSQL_BIND params[2];
+    memset(params, 0, sizeof(params));
+    params[0].buffer_type = MYSQL_TYPE_LONG;
+    params[0].buffer      = &room_id;
+    params[0].is_null     = 0;
+    params[0].length      = 0;
+    params[1].buffer_type = MYSQL_TYPE_LONG;
+    params[1].buffer      = &message_id;
+    params[1].is_null     = 0;
+    params[1].length      = 0;
+
+    if (mysql_stmt_bind_param(st, params) != 0) {
+        mysql_stmt_close(st);
+        return -1;
+    }
+
+    if (mysql_stmt_execute(st) != 0) {
+        mysql_stmt_close(st);
+        return -1;
+    }
+
+    // 결과 바인딩
+    uint32_t cnt = 0;
+    MYSQL_BIND result;
+    memset(&result, 0, sizeof(result));
+    result.buffer_type = MYSQL_TYPE_LONG;
+    result.buffer      = &cnt;
+    result.is_null     = 0;
+    result.length      = 0;
+
+    if (mysql_stmt_bind_result(st, &result) != 0) {
+        mysql_stmt_close(st);
+        return -1;
+    }
+
+    // fetch
+    if (mysql_stmt_fetch(st) != 0) {
+        mysql_stmt_close(st);
+        return -1;
+    }
+
+    mysql_stmt_close(st);
+    return (int)cnt;
+}

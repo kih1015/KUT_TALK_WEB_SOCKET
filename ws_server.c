@@ -194,55 +194,79 @@ static void handle_client(client_t *cli) {
            		return;
        		}
             // join 처리
-			else if (strcmp(jt->valuestring, "join") == 0) {
-    			const char *sid = cJSON_GetObjectItem(req, "sid")->valuestring;
-    			int room        = cJSON_GetObjectItem(req, "room")->valueint;
-    			uint32_t uid; time_t exp;
-    			if (session_repository_find_id(sid, &uid, &exp) == 0) {
-        			// 1) 해당 방의 unread 모두 지우기
-        			chat_repo_clear_unread(room, uid);
+            else if (strcmp(jt->valuestring, "join") == 0) {
+                const char *sid      = cJSON_GetObjectItem(req, "sid")->valuestring;
+                int          room     = cJSON_GetObjectItem(req, "room")->valueint;
+                uint32_t     uid;
+                time_t       exp;
 
-        			// 2) 클라이언트에게 unread=0 알림
-        			cJSON *clear = cJSON_CreateObject();
-        			cJSON_AddStringToObject(clear, "type",  "unread");
-        			cJSON_AddNumberToObject(clear, "room",  room);
-        			cJSON_AddNumberToObject(clear, "count", 0);
-        			send_json(cli, clear);
+                if (session_repository_find_id(sid, &uid, &exp) == 0) {
+                    // 0) 이 사용자가 읽지 않은 메시지 ID 리스트 미리 가져오기
+                    chat_unread_t *old_unreads;
+                    size_t         old_cnt;
+                    if (chat_repo_get_unread_counts_for_user(room, uid, &old_unreads, &old_cnt) != 0) {
+                        old_cnt = 0;  // 에러 시엔 아무 것도 없다고 취급
+                    }
+                    uint32_t *msg_ids = NULL;
+                    if (old_cnt > 0) {
+                        msg_ids = malloc(old_cnt * sizeof(uint32_t));
+                        for (size_t i = 0; i < old_cnt; i++) {
+                            msg_ids[i] = old_unreads[i].message_id;
+                        }
+                    }
+                    free(old_unreads);
 
-        			// 3) 내부 상태 업데이트
-        			cli->user_id = uid;
-        			cli->room_id = room;
+                    // 1) 해당 방에서 이 사용자의 unread 전부 지우기
+                    chat_repo_clear_unread(room, uid);
 
-        			// 4) 다른 멤버들에게 joined 브로드캐스트
-        			uint32_t *m; size_t mcnt;
-        			chat_repo_get_room_members(room, &m, &mcnt);
-        			cJSON *res = cJSON_CreateObject();
-        			cJSON_AddStringToObject(res, "type", "joined");
-        			cJSON_AddNumberToObject(res, "room", room);
-        			cJSON *ua = cJSON_AddArrayToObject(res, "users");
-        			for (size_t i = 0; i < mcnt; i++) {
-            			cJSON_AddItemToArray(ua, cJSON_CreateNumber(m[i]));
-        			}
-        			free(m);
-        			broadcast_room(room, res);
+                    // 2) 클라이언트에게 unread=0 알림
+                    {
+                        cJSON *clear = cJSON_CreateObject();
+                        cJSON_AddStringToObject(clear, "type",  "unread");
+                        cJSON_AddNumberToObject(clear, "room",  room);
+                        cJSON_AddNumberToObject(clear, "count", 0);
+                        send_json(cli, clear);
+                    }
 
-            		// 5) 가입한 클라이언트에게 방 내 모든 메시지별 언리드 수 전송
-            		{
-                		chat_unread_t *unreads;
-                		size_t ucnt;
-                		if (chat_repo_get_unread_counts(room, &unreads, &ucnt) == 0) {
-                    		for (size_t j = 0; j < ucnt; j++) {
-                        		cJSON *upd = cJSON_CreateObject();
-                        		cJSON_AddStringToObject(upd, "type",      "updated-message");
-                        		cJSON_AddNumberToObject(upd, "id",        unreads[j].message_id);
-                        		cJSON_AddNumberToObject(upd, "unread_cnt",unreads[j].count);
-                        		broadcast_room(room, upd);
-                    		}
-                    		free(unreads);
-                		}
-            		}
-    			}
-			}
+                    // 3) 내부 상태 업데이트
+                    cli->user_id = uid;
+                    cli->room_id = room;
+
+                    // 4) 다른 멤버들에게 joined 브로드캐스트
+                    {
+                        uint32_t *m;
+                        size_t    mcnt;
+                        if (chat_repo_get_room_members(room, &m, &mcnt) == 0) {
+                            cJSON *res = cJSON_CreateObject();
+                            cJSON_AddStringToObject(res, "type", "joined");
+                            cJSON_AddNumberToObject(res, "room", room);
+                            cJSON *ua = cJSON_AddArrayToObject(res, "users");
+                            for (size_t i = 0; i < mcnt; i++) {
+                                cJSON_AddItemToArray(ua, cJSON_CreateNumber(m[i]));
+                            }
+                            free(m);
+                            broadcast_room(room, res);
+                        }
+                    }
+
+                    // 5) 원래 이 사용자가 unread 카운트가 있던 메시지들에 대해
+                    //    새로운 unread(count of *other* users) 수를 조회·전송
+                    if (msg_ids) {
+                        for (size_t i = 0; i < old_cnt; i++) {
+                            uint32_t mid = msg_ids[i];
+                            int new_cnt = chat_repo_get_unread_count_for_message(room, mid);
+
+                            cJSON *upd = cJSON_CreateObject();
+                            cJSON_AddStringToObject(upd, "type",      "updated-message");
+                            cJSON_AddNumberToObject(upd, "id",        mid);
+                            cJSON_AddNumberToObject(upd, "unread_cnt", new_cnt);
+                            // 입장한 사용자에게만 보내기
+                            send_json(cli, upd);
+                        }
+                        free(msg_ids);
+                    }
+                }
+            }
             // leave 처리
             else if (strcmp(jt->valuestring, "leave") == 0) {
                 uint32_t rid = cli->room_id;
