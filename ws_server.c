@@ -261,7 +261,7 @@ static void handle_client(client_t *cli) {
                             cJSON_AddNumberToObject(upd, "id",        mid);
                             cJSON_AddNumberToObject(upd, "unread_cnt", new_cnt);
                             // 입장한 사용자에게만 보내기
-                            broadcast_room(room, res);
+                            broadcast_room(room, upd);
                         }
                         free(msg_ids);
                     }
