@@ -164,49 +164,50 @@ int chat_repo_count_unread(uint32_t room_id, uint32_t user_id, uint32_t *out_cou
 }
 
 /* ---------- 채팅방 멤버 조회 구현 ---------- */
-int chat_repo_get_room_members(
-    uint32_t room_id,
-    uint32_t **out_user_ids,
-    size_t *out_count
-) {
+int chat_repo_get_room_members(uint32_t room_id,
+                               uint32_t **out_user_ids,
+                               size_t   *out_count)
+{
     MYSQL *db = get_db();
     if (!db) return -1;
 
     MYSQL_STMT *st = mysql_stmt_init(db);
     const char *sql =
-            "SELECT user_id FROM chat_room_member WHERE room_id = ?";
+      "SELECT user_id FROM chat_room_member WHERE room_id = ?";
     mysql_stmt_prepare(st, sql, strlen(sql));
 
-    MYSQL_BIND pb = {0};
-    pb.buffer_type = MYSQL_TYPE_LONG;
-    pb.buffer = &room_id;
-    mysql_stmt_bind_param(st, &pb);
-
+    // — 파라미터 바인딩
+    MYSQL_BIND param = {0};
+    param.buffer_type = MYSQL_TYPE_LONG;
+    param.buffer      = &room_id;
+    mysql_stmt_bind_param(st, &param);
     mysql_stmt_execute(st);
 
-    MYSQL_RES *meta = mysql_stmt_result_metadata(st);
+    // — 결과 버퍼링 & 행 수 확보
     mysql_stmt_store_result(st);
-
     size_t n = mysql_stmt_num_rows(st);
-    uint32_t *arr = calloc(n, sizeof(uint32_t));
+    uint32_t *ids = calloc(n, sizeof(uint32_t));
 
-    MYSQL_BIND rb = {0};
-    rb.buffer_type = MYSQL_TYPE_LONG;
-    rb.buffer = arr;
+    // — 결과 바인딩 (임시 변수 사용)
+    uint32_t tmp = 0;
+    MYSQL_BIND result = {0};
+    result.buffer_type   = MYSQL_TYPE_LONG;
+    result.buffer        = &tmp;
+    result.buffer_length = sizeof(tmp);
+    result.is_null       = 0;
+    result.length        = 0;
+    mysql_stmt_bind_result(st, &result);
 
-    mysql_stmt_bind_result(st, &rb);
-
+    // — fetch 루프
     size_t idx = 0;
-    while (mysql_stmt_fetch(st) == 0 && idx < n) {
-        idx++;
-        // advance buffer pointer
-        rb.buffer = arr + idx;
+    while (idx < n && mysql_stmt_fetch(st) == 0) {
+        ids[idx++] = tmp;
     }
 
     mysql_stmt_close(st);
 
-    *out_user_ids = arr;
-    *out_count = n;
+    *out_user_ids = ids;
+    *out_count    = idx;  // 혹시 실제 읽은 행 수(idx)가 n보다 작으면 그 값으로…
     return 0;
 }
 

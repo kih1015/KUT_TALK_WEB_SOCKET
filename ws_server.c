@@ -277,29 +277,29 @@ static void handle_client(client_t *cli) {
 				        // 2) clients 리스트를 돌며 같은 room_id인 경우 플래그 세우기
 				        pthread_mutex_lock(&clients_mtx);
 				        for (client_t *c = clients; c; c = c->next) {
- 				           if (c->handshaked && c->room_id == cli->room_id) {
+ 				           	if (c->handshaked && c->room_id == cli->room_id) {
  				               for (size_t j = 0; j < mcnt; j++) {
  				                   if (members[j] == c->user_id) {
   				                      online[j] = true;
   				                      break;
   				                  }
  				               }
-  				          }
-  				      }
-  				      pthread_mutex_unlock(&clients_mtx);
+  				           	}
+  				        }
+  				        pthread_mutex_unlock(&clients_mtx);
 
   				      // 3) 전체 멤버를 돌면서 발신자·online인 사람 제외 → unread 추가
-  				      for (size_t i = 0; i < mcnt; i++) {
-  				          uint32_t uid = members[i];
-   				         if (uid == cli->user_id)     continue; // 자기 자신
-   				         if (online[i])               continue; // 이미 같은 방에 online
+  				      	for (size_t i = 0; i < mcnt; i++) {
+  				         	uint32_t uid = members[i];
+   				         	if (uid == cli->user_id)     continue; // 자기 자신
+   				         	if (online[i])               continue; // 이미 같은 방에 online
 
-    				        chat_repo_add_unread(mid, uid);
-    				    }
+    				     	chat_repo_add_unread(mid, uid);
+    				  	}
 
-    				    free(online);
-  				      free(members);
-  				  }
+    				  	free(online);
+  				      	free(members);
+  				    }
 				}
 
             	notify_unread(cli->room_id, mid, cli->user_id);
