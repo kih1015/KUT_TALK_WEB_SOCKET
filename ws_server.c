@@ -201,26 +201,39 @@ static void handle_client(client_t *cli) {
                 return;
             }
             // join 처리
-            if (strcmp(jt->valuestring, "join") == 0) {
-                const char *sid = cJSON_GetObjectItem(req, "sid")->valuestring;
-                int room        = cJSON_GetObjectItem(req, "room")->valueint;
-                uint32_t uid; time_t exp;
-                if (session_repository_find_id(sid, &uid, &exp) == 0) {
-                    chat_repo_join_room(room, uid);
-                    cli->user_id = uid;
-                    cli->room_id = room;
-                    uint32_t *m; size_t mcnt;
-                    chat_repo_get_room_members(room, &m, &mcnt);
-                    cJSON *res = cJSON_CreateObject();
-                    cJSON_AddStringToObject(res, "type", "joined");
-                    cJSON_AddNumberToObject(res, "room", room);
-                    cJSON *ua = cJSON_AddArrayToObject(res, "users");
-                    for (size_t i = 0; i < mcnt; i++)
-                        cJSON_AddItemToArray(ua, cJSON_CreateNumber(m[i]));
-                    free(m);
-                    broadcast_room(room, res);
-                }
-            }
+			if (strcmp(jt->valuestring, "join") == 0) {
+    			const char *sid = cJSON_GetObjectItem(req, "sid")->valuestring;
+    			int room        = cJSON_GetObjectItem(req, "room")->valueint;
+    			uint32_t uid; time_t exp;
+    			if (session_repository_find_id(sid, &uid, &exp) == 0) {
+        			// 1) 해당 방의 unread 모두 지우기
+        			chat_repo_clear_unread(room, uid);
+
+        			// 2) 클라이언트에게 unread=0 알림
+        			cJSON *clear = cJSON_CreateObject();
+        			cJSON_AddStringToObject(clear, "type",  "unread");
+        			cJSON_AddNumberToObject(clear, "room",  room);
+        			cJSON_AddNumberToObject(clear, "count", 0);
+        			send_json(cli, clear);
+
+        			// 3) 내부 상태 업데이트
+        			cli->user_id = uid;
+        			cli->room_id = room;
+
+        			// 4) 다른 멤버들에게 joined 브로드캐스트
+        			uint32_t *m; size_t mcnt;
+        			chat_repo_get_room_members(room, &m, &mcnt);
+        			cJSON *res = cJSON_CreateObject();
+        			cJSON_AddStringToObject(res, "type", "joined");
+        			cJSON_AddNumberToObject(res, "room", room);
+        			cJSON *ua = cJSON_AddArrayToObject(res, "users");
+        			for (size_t i = 0; i < mcnt; i++) {
+            			cJSON_AddItemToArray(ua, cJSON_CreateNumber(m[i]));
+        			}
+        			free(m);
+        			broadcast_room(room, res);
+    			}
+			}
             // leave 처리
             else if (strcmp(jt->valuestring, "leave") == 0) {
                 uint32_t rid = cli->room_id;
