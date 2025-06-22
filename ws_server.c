@@ -198,7 +198,6 @@ static void handle_client(client_t *cli) {
                 }
             } else if (strcmp(jt->valuestring, "leave") == 0) {
                 uint32_t rid = cli->room_id;
-                chat_repo_leave_room(rid, cli->user_id);
                 cli->room_id = 0;
                 cJSON *res = cJSON_CreateObject();
                 cJSON_AddStringToObject(res, "type", "left");
