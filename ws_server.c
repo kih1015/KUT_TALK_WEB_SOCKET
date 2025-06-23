@@ -447,19 +447,26 @@ int main() {
             last_ping = now;
         }
 
-        // 2) app-level pong 타임아웃 검사
-        pthread_mutex_lock(&clients_mtx);
-        client_t *prev = NULL, *c = clients;
-        while (c) {
-            client_t *next = c->next;
-            if (c->handshaked && (now - c->last_pong) > PONG_TIMEOUT) {
-                disconnect_client(c);
-            } else {
-                prev = c;
+        {
+            pthread_mutex_lock(&clients_mtx);
+
+            client_t **p = &clients;
+            while (*p) {
+                client_t *c = *p;
+                if (c->handshaked && (now - c->last_pong) > PONG_TIMEOUT) {
+                    // 1) epoll, 소켓, 리스트, 메모리까지 완전히 정리
+                    epoll_ctl(epoll_fd, EPOLL_CTL_DEL, c->fd, NULL);
+                    close(c->fd);
+                    *p = c->next;
+                    free(c);
+                } else {
+                    // 삭제하지 않은 경우에만 다음으로 이동
+                    p = &c->next;
+                }
             }
-            c = next;
+
+            pthread_mutex_unlock(&clients_mtx);
         }
-        pthread_mutex_unlock(&clients_mtx);
     }
 
     db_thread_cleanup();
